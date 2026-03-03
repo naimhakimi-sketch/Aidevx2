@@ -9,7 +9,7 @@ create table document_chunks (
   project_id uuid references public.projects (id) on delete cascade not null,
   document_path text not null,
   content text not null,
-  embedding vector(1536) -- OpenAI embeddings have 1536 dimensions
+  embedding extensions.vector(1536) -- OpenAI embeddings have 1536 dimensions
 );
 
 -- Protect the table with RLS
@@ -42,7 +42,7 @@ using (
 
 -- Create a function to similarity search for document chunks
 create or replace function match_document_chunks (
-  query_embedding vector(1536),
+  query_embedding extensions.vector(1536),
   match_threshold float,
   match_count int,
   p_project_id uuid
@@ -55,6 +55,7 @@ returns table (
   similarity float
 )
 language sql stable
+set search_path = public, extensions
 as $$
   select
     document_chunks.id,
