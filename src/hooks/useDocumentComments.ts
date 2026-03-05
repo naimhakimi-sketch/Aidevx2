@@ -30,30 +30,44 @@ export function useDocumentComments(docId: string | undefined, projectId: string
         try {
             const { data, error } = await supabase
                 .from('doc_comments')
-                .select(`
-                    *,
-                    profiles:author_id (email, full_name)
-                `)
+                .select('*')
                 .eq('doc_id', docId)
                 .eq('project_id', projectId)
                 .order('created_at', { ascending: true });
 
             if (error) throw error;
 
-            const flat: DocComment[] = (data || []).map((c: any) => ({
-                id: c.id,
-                docId: c.doc_id,
-                projectId: c.project_id,
-                sectionIndex: c.section_index,
-                parentId: c.parent_id,
-                authorId: c.author_id,
-                authorName: c.profiles?.full_name || '',
-                authorEmail: c.profiles?.email || '',
-                content: c.content,
-                resolved: c.resolved,
-                resolvedBy: c.resolved_by,
-                createdAt: c.created_at,
-            }));
+            // Fetch author profiles separately since author_id references auth.users, not profiles
+            let profilesMap = new Map<string, any>();
+            if (data && data.length > 0) {
+                const authorIds = [...new Set(data.map((c: any) => c.author_id).filter(Boolean))];
+                if (authorIds.length > 0) {
+                    const { data: profilesData } = await supabase
+                        .from('profiles')
+                        .select('id, email, full_name')
+                        .in('id', authorIds);
+                    
+                    profilesMap = new Map(profilesData?.map(p => [p.id, p]) || []);
+                }
+            }
+
+            const flat: DocComment[] = (data || []).map((c: any) => {
+                const profile = profilesMap.get(c.author_id) || { email: '', full_name: '' };
+                return {
+                    id: c.id,
+                    docId: c.doc_id,
+                    projectId: c.project_id,
+                    sectionIndex: c.section_index,
+                    parentId: c.parent_id,
+                    authorId: c.author_id,
+                    authorName: profile.full_name || '',
+                    authorEmail: profile.email || '',
+                    content: c.content,
+                    resolved: c.resolved,
+                    resolvedBy: c.resolved_by,
+                    createdAt: c.created_at,
+                };
+            });
 
             // Build threaded structure: top-level comments with replies nested
             const topLevel = flat.filter(c => !c.parentId);
@@ -66,6 +80,9 @@ export function useDocumentComments(docId: string | undefined, projectId: string
             setComments(topLevel);
         } catch (error) {
             console.error('Error fetching comments:', error);
+            if (error instanceof Error) {
+                console.error('Error details:', error.message);
+            }
         } finally {
             setLoading(false);
         }

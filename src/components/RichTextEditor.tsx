@@ -1,7 +1,6 @@
 import { useEditor, EditorContent, Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
-import Underline from '@tiptap/extension-underline'
 import {
     Bold, Italic, Strikethrough, Underline as UnderlineIcon,
     Heading1, Heading2, Heading3,
@@ -136,7 +135,6 @@ const RichTextEditor = ({ content, onChange, placeholder = 'Start typing...', ed
             Placeholder.configure({
                 placeholder,
             }),
-            Underline,
         ],
         content: content,
         editable: editable,

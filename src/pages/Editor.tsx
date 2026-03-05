@@ -17,13 +17,11 @@ import { DOC_STRUCTURES } from '../constants/docs';
 import { useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { renderAsync } from 'docx-preview';
-import { buildDocx } from '../lib/export/docxBuilder';
+import { buildDocxFromTemplate, type TemplateInjectionData } from '../lib/export/templateInjection';
 import { exportPreviewToPdf } from '../lib/export/pdfExport';
 import { useDocumentComments } from '../hooks/useDocumentComments';
 import { useDocumentPresence } from '../hooks/useDocumentPresence';
 import type { DocSection } from '../constants/urs_structure';
-
-// Removed local DOC_STRUCTURES definition in favor of import
 
 
 
@@ -65,6 +63,25 @@ export default function Editor() {
     const sectionTitles = structure.map((item) =>
         typeof item === 'string' ? item : (item as DocSection).title
     );
+
+    // Process section content for injection - just use raw text, no XML processing
+    const processContentForInjection = (content: Record<number, Record<string, unknown>[]>): Record<number, string> => {
+        return Object.entries(content).reduce((processed, [index, blocks]) => {
+            const sectionIndex = Number(index);
+            
+            // Combine all blocks into plain text (remove HTML tags)
+            const text = blocks.map(block => {
+                if (typeof block.data === 'string') {
+                    // Remove HTML tags and return plain text
+                    return block.data.replace(/<[^>]*>/g, '').trim();
+                }
+                return '';
+            }).filter(t => t).join('\n\n');
+            
+            processed[sectionIndex] = text;
+            return processed;
+        }, {} as Record<number, string>);
+    };
 
     const handleAutoGen = async (sectionIdx: number, sectionTitle: string, instructions?: string[]) => {
         if (!projectId) return;
@@ -195,25 +212,88 @@ export default function Editor() {
 
     const generateDocumentBlob = useCallback(async () => {
         try {
-            const blob = await buildDocx({
+            // Use template-based injection to match the export preview
+            const templateUrl = '/templates/URS-template.zip';
+            
+            // Process section content for OOXML injection (handles tables and text)
+            const injectionContent = processContentForInjection(sectionContent);
+            
+            // Build injection data dynamically from all available sections
+            const injectionData: TemplateInjectionData = {
                 projectName: project?.name || 'Untitled Project',
-                docTitle,
-                docType,
-                structure,
-                sectionContent,
-            });
+                fileName: docTitle || 'Untitled Document',
+                department: injectionContent[2] || '',
+                ...Object.entries(injectionContent).reduce((acc, [index, content]) => {
+                    const sectionIndex = Number(index);
+                    acc[`section_${sectionIndex}`] = content;
+                    return acc;
+                }, {} as Record<string, string>)
+            };
+            
+            const blob = await buildDocxFromTemplate(templateUrl, injectionData);
             return blob;
         } catch (error) {
             console.error('Error generating document:', error);
             alert('Failed to generate document. Please check the console for details.');
             return null;
         }
-    }, [project?.name, docTitle, docType, structure, sectionContent]);
+    }, [project?.name, docTitle, sectionContent]);
 
     const handleDownload = async () => {
-        const blob = await generateDocumentBlob();
-        if (blob) {
-            saveAs(blob, `${docTitle}.docx`);
+        try {
+            // Try template-based injection first (for URS templates)
+            const templateUrl = '/templates/URS-template.zip';
+            
+            // Log current sectionContent for debugging
+            console.log('Current sectionContent:', sectionContent);
+            
+            // Process section content for OOXML injection (handles tables and text)
+            const injectionContent = processContentForInjection(sectionContent);
+            console.log('Processed injection content:', injectionContent);
+            
+            // Log specifically tables
+            console.log('Section 3 content length:', injectionContent[3]?.length);
+            console.log('Section 8 content length:', injectionContent[8]?.length);
+            if (injectionContent[3]) {
+                console.log('Section 3 is table?', injectionContent[3].includes('<w:tbl'));
+            }
+            if (injectionContent[8]) {
+                console.log('Section 8 is table?', injectionContent[8].includes('<w:tbl'));
+            }
+            
+            // Build injection data dynamically from all available sections
+            const injectionData: TemplateInjectionData = {
+                projectName: project?.name || 'Untitled Project',
+                fileName: docTitle || 'Untitled Document',
+                department: injectionContent[2] || '',
+                ...Object.entries(injectionContent).reduce((acc, [index, content]) => {
+                    const sectionIndex = Number(index);
+                    acc[`section_${sectionIndex}`] = content;
+                    return acc;
+                }, {} as Record<string, string>)
+            };
+
+            console.log('Final injection data keys:', Object.keys(injectionData));
+
+
+            try {
+                const blob = await buildDocxFromTemplate(templateUrl, injectionData);
+                saveAs(blob, `${docTitle}.docx`);
+                console.log('Document exported using template injection');
+                return;
+            } catch (templateError) {
+                console.warn('Template injection failed, falling back to standard export:', templateError);
+                // Fallback to the existing buildDocx function
+            }
+
+            // Fallback: Use standard document builder
+            const blob = await generateDocumentBlob();
+            if (blob) {
+                saveAs(blob, `${docTitle}.docx`);
+            }
+        } catch (error) {
+            console.error('Download failed:', error);
+            alert('Failed to generate document. Please try again.');
         }
     };
 
@@ -276,13 +356,12 @@ export default function Editor() {
         }
     }, [generateDocumentBlob]);
 
-    // Effect to render preview when modals open
-    // Effect to render preview when modals open
+    // Effect to render preview when modals open or content changes
     useEffect(() => {
         if (showExport && previewContainerRef.current) {
             renderPreviewToElement(previewContainerRef.current);
         }
-    }, [showExport, renderPreviewToElement]);
+    }, [showExport, renderPreviewToElement, sectionContent]);
 
     // Separate effect for the main preview modal
     const mainPreviewRef = useRef<HTMLDivElement>(null);
@@ -290,7 +369,7 @@ export default function Editor() {
         if (showPreview && mainPreviewRef.current) {
             renderPreviewToElement(mainPreviewRef.current);
         }
-    }, [showPreview, renderPreviewToElement]);
+    }, [showPreview, renderPreviewToElement, sectionContent]);
 
 
 
